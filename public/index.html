@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Codex Session Monitor</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <h1>Codex Monitor</h1>
+          <p id="integrationLine">Starting...</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="armButton" type="button">Arm alerts</button>
+        <button id="testButton" type="button">Test alarm</button>
+      </div>
+    </header>
+
+    <main class="dashboard">
+      <section class="card status-card" aria-labelledby="stateTitle">
+        <div class="card-label">Session State</div>
+        <div class="state-row">
+          <span id="stateDot" class="state-dot state-idle" aria-hidden="true"></span>
+          <h2 id="stateTitle">Idle</h2>
+        </div>
+        <div id="runTimer" class="run-timer">No active run</div>
+        <button id="dismissButton" class="dismiss-button" type="button" disabled>Dismiss alarm</button>
+      </section>
+
+      <section class="card usage-card" aria-labelledby="usageTitle">
+        <div class="card-label">Usage</div>
+        <h2 id="usageTitle">Current Session</h2>
+        <div class="usage-line">
+          <span>Tokens</span>
+          <strong id="tokenText">Waiting for token event</strong>
+        </div>
+        <div class="meter" aria-hidden="true"><span id="tokenMeter"></span></div>
+        <div class="usage-line">
+          <span>Plan</span>
+          <strong id="planText">Not exposed</strong>
+        </div>
+        <div class="meter meter-plan" aria-hidden="true"><span id="planMeter"></span></div>
+        <div id="resetText" class="small-note">Reset unavailable</div>
+      </section>
+
+      <section class="metrics-grid" aria-label="Session statistics">
+        <article class="metric">
+          <span>Today</span>
+          <strong id="tasksToday">0</strong>
+        </article>
+        <article class="metric">
+          <span>This session</span>
+          <strong id="tasksSession">0</strong>
+        </article>
+        <article class="metric">
+          <span>This week</span>
+          <strong id="tasksWeek">0</strong>
+        </article>
+        <article class="metric">
+          <span>Average duration</span>
+          <strong id="avgDuration">--</strong>
+        </article>
+        <article class="metric">
+          <span>Last activity</span>
+          <strong id="lastActivity">--</strong>
+        </article>
+      </section>
+
+      <section class="card session-card" aria-labelledby="sessionTitle">
+        <div class="card-label">Active Session</div>
+        <h2 id="sessionTitle">No session selected</h2>
+        <dl class="session-details">
+          <div><dt>Source</dt><dd id="sessionSource">--</dd></div>
+          <div><dt>CLI</dt><dd id="sessionCli">--</dd></div>
+          <div><dt>Tasks</dt><dd id="sessionTasks">0</dd></div>
+          <div><dt>File</dt><dd id="sessionFile">--</dd></div>
+        </dl>
+      </section>
+
+      <section class="card log-card" aria-labelledby="logTitle">
+        <div class="card-label">Completion Log</div>
+        <h2 id="logTitle">Recent Runs</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Completed</th>
+                <th>Duration</th>
+                <th>Session</th>
+              </tr>
+            </thead>
+            <tbody id="completionRows">
+              <tr><td colspan="4">No completions logged yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div id="alertOverlay" class="alert-overlay" role="alertdialog" aria-modal="true" aria-labelledby="alertTitle" aria-hidden="true">
+      <div class="alert-banner">
+        <div id="alertKicker" class="alert-kicker">Codex finished</div>
+        <h2 id="alertTitle">Task complete</h2>
+        <p id="alertDetails">Completion details unavailable.</p>
+        <button id="overlayDismissButton" type="button">Dismiss alarm</button>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
