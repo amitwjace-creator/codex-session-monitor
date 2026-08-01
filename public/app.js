@@ -1,5 +1,6 @@
 const els = {
   integrationLine: document.getElementById("integrationLine"),
+  alarmMode: document.getElementById("alarmMode"),
   armButton: document.getElementById("armButton"),
   testButton: document.getElementById("testButton"),
   dismissButton: document.getElementById("dismissButton"),
@@ -20,6 +21,9 @@ const els = {
   tasksSession: document.getElementById("tasksSession"),
   tasksWeek: document.getElementById("tasksWeek"),
   avgDuration: document.getElementById("avgDuration"),
+  medianDuration: document.getElementById("medianDuration"),
+  slowestDuration: document.getElementById("slowestDuration"),
+  errorCount: document.getElementById("errorCount"),
   lastActivity: document.getElementById("lastActivity"),
   sessionTitle: document.getElementById("sessionTitle"),
   sessionSource: document.getElementById("sessionSource"),
@@ -38,6 +42,7 @@ let alarmTimer = null;
 let alertsArmed = false;
 let notificationStatus = "default";
 let fallbackTimer = null;
+let alarmMode = localStorage.getItem("codex-session-monitor:alarm-mode") || "urgent";
 
 const labels = {
   idle: "Idle",
@@ -49,7 +54,14 @@ const labels = {
 
 els.armButton.addEventListener("click", armAlerts);
 els.testButton.addEventListener("click", () => {
-  fetch("/api/test-alert", { method: "POST" }).catch(() => {});
+  const params = new URLSearchParams({ mode: alarmMode });
+  fetch(`/api/test-alert?${params}`, { method: "POST" }).catch(() => {});
+});
+els.alarmMode.value = alarmMode;
+els.alarmMode.addEventListener("change", () => {
+  alarmMode = els.alarmMode.value;
+  localStorage.setItem("codex-session-monitor:alarm-mode", alarmMode);
+  if (alarmMode === "silent") stopBrowserAlarm();
 });
 els.dismissButton.addEventListener("click", dismissAlarm);
 els.overlayDismissButton.addEventListener("click", dismissAlarm);
@@ -196,6 +208,13 @@ function renderStats() {
   els.avgDuration.textContent = stats.averageTaskDurationMs === null || stats.averageTaskDurationMs === undefined
     ? "--"
     : formatDuration(stats.averageTaskDurationMs);
+  els.medianDuration.textContent = stats.medianTaskDurationMs === null || stats.medianTaskDurationMs === undefined
+    ? "--"
+    : formatDuration(stats.medianTaskDurationMs);
+  els.slowestDuration.textContent = stats.slowestTaskDurationMs === null || stats.slowestTaskDurationMs === undefined
+    ? "--"
+    : formatDuration(stats.slowestTaskDurationMs);
+  els.errorCount.textContent = formatNumber(stats.errorTasks || 0);
   els.lastActivity.textContent = stats.timeSinceLastActivityMs === null || stats.timeSinceLastActivityMs === undefined
     ? "--"
     : `${formatDuration(stats.timeSinceLastActivityMs)} ago`;
@@ -261,9 +280,9 @@ function handleAlert() {
 }
 
 function startBrowserAlarm(status) {
-  if (!alertsArmed || !audioContext) return;
+  if (!alertsArmed || !audioContext || alarmMode === "silent") return;
   stopBrowserAlarm();
-  const pattern = status === "error" ? [520, 390, 520, 310] : [980, 740, 980, 620];
+  const pattern = getAlarmPattern(status, alarmMode);
   let index = 0;
   alarmGain = audioContext.createGain();
   alarmGain.gain.value = 0.0001;
@@ -279,6 +298,11 @@ function startBrowserAlarm(status) {
     index = (index + 1) % pattern.length;
     alarmOscillator.frequency.setTargetAtTime(pattern[index], audioContext.currentTime, 0.015);
   }, 180);
+}
+
+function getAlarmPattern(status, mode) {
+  if (mode === "gentle") return status === "error" ? [440, 330] : [660, 880];
+  return status === "error" ? [520, 390, 520, 310] : [980, 740, 980, 620];
 }
 
 function stopBrowserAlarm() {

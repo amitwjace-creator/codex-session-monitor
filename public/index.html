@@ -16,6 +16,14 @@
         </div>
       </div>
       <div class="top-actions">
+        <label class="select-control" for="alarmMode">
+          <span>Alarm</span>
+          <select id="alarmMode">
+            <option value="urgent">Urgent</option>
+            <option value="gentle">Gentle</option>
+            <option value="silent">Silent</option>
+          </select>
+        </label>
         <button id="armButton" type="button">Arm alerts</button>
         <button id="testButton" type="button">Test alarm</button>
       </div>
@@ -64,6 +72,18 @@
         <article class="metric">
           <span>Average duration</span>
           <strong id="avgDuration">--</strong>
+        </article>
+        <article class="metric">
+          <span>Median duration</span>
+          <strong id="medianDuration">--</strong>
+        </article>
+        <article class="metric">
+          <span>Slowest run</span>
+          <strong id="slowestDuration">--</strong>
+        </article>
+        <article class="metric">
+          <span>Errors</span>
+          <strong id="errorCount">0</strong>
         </article>
         <article class="metric">
           <span>Last activity</span>

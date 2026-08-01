@@ -23,6 +23,7 @@ npm run check
 - Do not commit local runtime data from `.data/`, `.runtime/`, or monitor log files.
 - If you change the UI, update screenshots when the visual behavior changes.
 - If you change status detection, include notes about which Codex event types are involved.
+- Add or update tests for parser changes.
 
 ## Good First Issues
 

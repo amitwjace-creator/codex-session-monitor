@@ -3,6 +3,7 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Node.js 18+](https://img.shields.io/badge/node-%3E%3D18-2f7d32.svg)](package.json)
 [![Local first](https://img.shields.io/badge/local-first-blue.svg)](#privacy)
+[![CI](https://github.com/amitwjace-creator/codex-session-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/amitwjace-creator/codex-session-monitor/actions/workflows/ci.yml)
 
 A lightweight local dashboard that watches OpenAI Codex CLI sessions in real time and makes sure you notice the moment a task finishes.
 
@@ -11,6 +12,8 @@ Unofficial community tool. Not affiliated with or endorsed by OpenAI.
 Codex is great at long-running work. This app is for the moment you tab away, get distracted, and miss that the agent is done. It watches local Codex session events, shows live status and usage, then fires a looping alarm, full-screen visual alert, and native notification when a run completes or errors.
 
 ![Codex Session Monitor demo](docs/demo.gif)
+
+Video: [watch the short MP4 demo](docs/demo.mp4)
 
 ## Screenshots
 
@@ -23,13 +26,16 @@ Codex is great at long-running work. This app is for the moment you tab away, ge
 - Real-time session states: `idle`, `running`, `waiting_for_input`, `finished`, and `error`
 - Completion detection even when the browser tab is in the background
 - Looping audio alarm until dismissed
+- Configurable alarm modes: urgent, gentle, or silent
 - Full-screen flashing/bouncing completion alert
 - Native browser notification as a backup
 - Completion log with timestamp and duration
 - Token usage, context usage, plan usage, and reset time when Codex exposes them
 - Task counts for today, this session, and this week
-- Average task duration and time since last activity
+- Average, median, and slowest task duration, plus error count and time since last activity
 - Single dismiss action by click, `Esc`, `Enter`, or space
+- Parser test suite for Codex JSONL event edge cases
+- GitHub Actions CI for Node.js 18, 20, and 22
 - Dependency-free runtime: Node.js plus static HTML/CSS/JS
 
 ## How It Works
@@ -50,7 +56,16 @@ Requirements:
 
 - Node.js 18 or newer
 - OpenAI Codex CLI installed and writing sessions under `~/.codex`
-- Windows for the backend `Console.Beep` alarm loop. The dashboard visual alert and browser notification still work elsewhere.
+- Optional backend audio support:
+  - Windows: `Console.Beep`
+  - macOS: `afplay`
+  - Linux: `paplay`, `aplay`, or `ffplay`
+
+Run without cloning:
+
+```powershell
+npx github:amitwjace-creator/codex-session-monitor
+```
 
 Clone and run:
 
@@ -98,6 +113,8 @@ The app works with sensible defaults:
 HOST=127.0.0.1
 PORT=3786
 CODEX_HOME=%USERPROFILE%\.codex
+ALARM_MODE=urgent
+BACKEND_ALARM=on
 ```
 
 Override them when starting the server:
@@ -105,8 +122,17 @@ Override them when starting the server:
 ```powershell
 $env:PORT = "3790"
 $env:CODEX_HOME = "C:\Users\you\.codex"
+$env:ALARM_MODE = "gentle"
 npm start
 ```
+
+Alarm modes:
+
+- `urgent`: more insistent tone pattern
+- `gentle`: softer, slower tone pattern
+- `silent`: visual alert and browser notification only
+
+Set `BACKEND_ALARM=off` to disable the server-side audio loop while keeping browser audio available after **Arm alerts**.
 
 Runtime logs and local completion history are stored under ignored local folders:
 
@@ -126,7 +152,11 @@ The dashboard reads local Codex session metadata and token usage events. Public 
 - The Codex JSONL event format is local/undocumented and may change.
 - Usage and quota details appear only when Codex emits `token_count` events with rate-limit metadata.
 - Native notification behavior depends on browser permission and OS settings.
-- The backend audio alarm currently uses Windows `Console.Beep`; non-Windows users still get the visual alert and browser notification.
+- Linux backend audio depends on one of `paplay`, `aplay`, or `ffplay` being installed. Browser audio remains available after **Arm alerts**.
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md).
 
 ## Suggested GitHub Topics
 
@@ -136,7 +166,6 @@ The dashboard reads local Codex session metadata and token usage events. Public 
 
 Contributions are welcome. Good first improvements include:
 
-- macOS/Linux backend alarm support
 - More resilient Codex event parsing
 - Better historical charts
 - Tray app packaging

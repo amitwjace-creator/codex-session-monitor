@@ -1,6 +1,6 @@
 {
   "name": "codex-session-monitor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Local dashboard for monitoring OpenAI Codex CLI session status and completion alerts.",
   "license": "MIT",
   "keywords": [
@@ -22,10 +22,28 @@
   "bugs": {
     "url": "https://github.com/amitwjace-creator/codex-session-monitor/issues"
   },
+  "bin": {
+    "codex-session-monitor": "./bin/codex-session-monitor.js"
+  },
+  "files": [
+    "bin",
+    "docs",
+    "lib",
+    "public",
+    "test",
+    "server.js",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "ROADMAP.md",
+    "SECURITY.md"
+  ],
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check public/app.js"
+    "test": "node --test",
+    "check": "node --check server.js && node --check bin/codex-session-monitor.js && node --check public/app.js && node --check lib/session-parser.js && node --check lib/backend-alarm.js && npm test"
   },
   "engines": {
     "node": ">=18"

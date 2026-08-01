@@ -2,7 +2,13 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { execFile, spawn } = require("node:child_process");
+const { execFile } = require("node:child_process");
+const {
+  allTerminalTasks,
+  latestTerminalTask,
+  parseAllSessions
+} = require("./lib/session-parser");
+const { BackendAlarm, normalizeAlarmMode } = require("./lib/backend-alarm");
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number.parseInt(process.env.PORT || "3786", 10);
@@ -14,7 +20,8 @@ const DATA_DIR = path.join(__dirname, ".data");
 const STORE_FILE = path.join(DATA_DIR, "monitor-data.json");
 const RUNTIME_DIR = path.join(__dirname, ".runtime");
 const ALARM_STOP_FILE = path.join(RUNTIME_DIR, "alarm-stop");
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const DEFAULT_ALARM_MODE = normalizeAlarmMode(process.env.ALARM_MODE || "urgent");
+const BACKEND_ALARM_ENABLED = !/^(0|false|off|no)$/i.test(process.env.BACKEND_ALARM || "on");
 
 const parseCache = new Map();
 const sseClients = new Set();
@@ -23,7 +30,6 @@ let initialized = false;
 let knownTerminalKeys = new Set();
 let activeAlert = null;
 let lastSnapshot = null;
-let alarmProcess = null;
 let processSnapshot = {
   checkedAt: null,
   hasCodex: false,
@@ -34,6 +40,7 @@ let processSnapshot = {
 
 ensureDir(DATA_DIR);
 ensureDir(RUNTIME_DIR);
+const backendAlarm = new BackendAlarm({ stopFile: ALARM_STOP_FILE, runtimeDir: RUNTIME_DIR });
 let store = loadStore();
 for (const entry of store.completions) {
   if (entry.key) knownTerminalKeys.add(entry.key);
@@ -62,245 +69,7 @@ function saveStore() {
   fs.renameSync(tmp, STORE_FILE);
 }
 
-function discoverSessionFiles() {
-  const files = [];
-  function walk(dir) {
-    let entries = [];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-        try {
-          const stat = fs.statSync(fullPath);
-          files.push({ file: fullPath, mtimeMs: stat.mtimeMs, size: stat.size });
-        } catch {
-          // Ignore files that are rotating while we inspect them.
-        }
-      }
-    }
-  }
-  walk(SESSIONS_DIR);
-  files.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return files.map((item) => item.file);
-}
-
-function extractSessionId(file) {
-  const matches = path.basename(file).match(UUID_RE);
-  return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
-}
-
-function readSessionIndex() {
-  const index = new Map();
-  try {
-    const lines = fs.readFileSync(SESSION_INDEX, "utf8").split(/\r?\n/).filter(Boolean);
-    for (const line of lines) {
-      try {
-        const row = JSON.parse(line);
-        if (row.id) index.set(String(row.id).toLowerCase(), row);
-      } catch {
-        // Ignore partial index lines.
-      }
-    }
-  } catch {
-    // The index is helpful, not required.
-  }
-  return index;
-}
-
-function parseSessionFile(file) {
-  let stat;
-  try {
-    stat = fs.statSync(file);
-  } catch {
-    return null;
-  }
-
-  const cached = parseCache.get(file);
-  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-    return cached.parsed;
-  }
-
-  const parsed = {
-    file,
-    fileName: path.basename(file),
-    sessionId: extractSessionId(file),
-    name: null,
-    cwd: null,
-    source: null,
-    originator: null,
-    cliVersion: null,
-    createdAt: null,
-    updatedAt: new Date(stat.mtimeMs).toISOString(),
-    lastActivityAt: null,
-    lastActivityMs: stat.mtimeMs,
-    lastPayloadType: null,
-    taskStarts: [],
-    tasks: [],
-    openTask: null,
-    tokenEvent: null,
-    parseErrors: 0
-  };
-
-  let text = "";
-  try {
-    text = fs.readFileSync(file, "utf8");
-  } catch {
-    return parsed;
-  }
-
-  const lines = text.split(/\r?\n/);
-  let openTask = null;
-
-  function closeTask(status, event, lineNumber, terminalType) {
-    const completedAtMs = event.timestampMs || Date.now();
-    const startedAtMs = openTask ? openTask.startedAtMs : completedAtMs;
-    const sessionId = parsed.sessionId || "unknown-session";
-    const task = {
-      key: `${sessionId}:${openTask ? openTask.startLine : "unknown"}:${startedAtMs}:${completedAtMs}:${status}`,
-      sessionId: parsed.sessionId,
-      file,
-      status,
-      terminalType,
-      startedAt: new Date(startedAtMs).toISOString(),
-      startedAtMs,
-      completedAt: new Date(completedAtMs).toISOString(),
-      completedAtMs,
-      durationMs: Math.max(0, completedAtMs - startedAtMs),
-      startLine: openTask ? openTask.startLine : null,
-      completedLine: lineNumber
-    };
-    parsed.tasks.push(task);
-    openTask = null;
-    return task;
-  }
-
-  lines.forEach((line, index) => {
-    if (!line.trim()) return;
-    let event;
-    try {
-      event = JSON.parse(line);
-    } catch {
-      parsed.parseErrors += 1;
-      return;
-    }
-
-    const timestampMs = Date.parse(event.timestamp);
-    if (Number.isFinite(timestampMs)) {
-      event.timestampMs = timestampMs;
-      parsed.lastActivityAt = new Date(timestampMs).toISOString();
-      parsed.lastActivityMs = timestampMs;
-    }
-
-    const payload = event.payload || {};
-    const payloadType = payload.type || null;
-    if (payloadType) parsed.lastPayloadType = payloadType;
-
-    if (event.type === "session_meta") {
-      parsed.sessionId = (payload.session_id || payload.id || parsed.sessionId || "").toLowerCase();
-      parsed.cwd = payload.cwd || parsed.cwd;
-      parsed.source = payload.source || parsed.source;
-      parsed.originator = payload.originator || parsed.originator;
-      parsed.cliVersion = payload.cli_version || parsed.cliVersion;
-      parsed.createdAt = payload.timestamp || event.timestamp || parsed.createdAt;
-    }
-
-    if (event.type !== "event_msg") return;
-
-    if (payloadType === "token_count") {
-      parsed.tokenEvent = {
-        at: parsed.lastActivityAt,
-        info: payload.info || null,
-        rateLimits: payload.rate_limits || null
-      };
-      return;
-    }
-
-    if (payloadType === "task_started") {
-      if (openTask) {
-        closeTask("error", event, index + 1, "interrupted_by_new_task");
-      }
-      const startedAtMs = event.timestampMs || Date.now();
-      openTask = {
-        sessionId: parsed.sessionId,
-        file,
-        startedAt: new Date(startedAtMs).toISOString(),
-        startedAtMs,
-        startLine: index + 1
-      };
-      parsed.taskStarts.push(openTask);
-      return;
-    }
-
-    if (payloadType === "task_complete") {
-      closeTask("finished", event, index + 1, payloadType);
-      return;
-    }
-
-    if (isTerminalErrorPayload(payloadType)) {
-      closeTask("error", event, index + 1, payloadType || "error");
-    }
-  });
-
-  parsed.openTask = openTask;
-  if (!parsed.createdAt && parsed.taskStarts.length) {
-    parsed.createdAt = parsed.taskStarts[0].startedAt;
-  }
-
-  parseCache.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, parsed });
-  return parsed;
-}
-
-function isTerminalErrorPayload(payloadType) {
-  if (!payloadType) return false;
-  return [
-    "turn_aborted",
-    "task_failed",
-    "stream_error",
-    "fatal_error",
-    "model_error",
-    "api_error"
-  ].includes(payloadType) || /^.*_error$/.test(payloadType);
-}
-
-function parseAllSessions() {
-  const index = readSessionIndex();
-  const parsed = discoverSessionFiles()
-    .map(parseSessionFile)
-    .filter(Boolean);
-
-  for (const session of parsed) {
-    const indexRow = session.sessionId ? index.get(session.sessionId) : null;
-    session.name = indexRow?.thread_name || session.name || session.sessionId || session.fileName;
-    if (indexRow?.updated_at) session.updatedAt = indexRow.updated_at;
-  }
-
-  parsed.sort((a, b) => b.lastActivityMs - a.lastActivityMs);
-  return parsed;
-}
-
-function latestTerminalTask(parsedSessions) {
-  let latest = null;
-  for (const session of parsedSessions) {
-    for (const task of session.tasks) {
-      if (!latest || task.completedAtMs > latest.completedAtMs) {
-        latest = task;
-      }
-    }
-  }
-  return latest;
-}
-
-function allTerminalTasks(parsedSessions) {
-  return parsedSessions.flatMap((session) => session.tasks);
-}
-
-function recordCompletion(task, session, synthetic = false) {
+function recordCompletion(task, session, synthetic = false, alarmMode = DEFAULT_ALARM_MODE) {
   if (!task || !task.key) return null;
   let entry = store.completions.find((item) => item.key === task.key);
   if (!entry) {
@@ -315,6 +84,7 @@ function recordCompletion(task, session, synthetic = false) {
       completedAt: task.completedAt,
       durationMs: task.durationMs,
       terminalType: task.terminalType,
+      alarmMode,
       synthetic,
       createdAt: new Date().toISOString(),
       dismissedAt: null
@@ -326,19 +96,19 @@ function recordCompletion(task, session, synthetic = false) {
   return entry;
 }
 
-function triggerAlert(task, session, synthetic = false) {
-  const entry = recordCompletion(task, session, synthetic);
+function triggerAlert(task, session, synthetic = false, alarmMode = DEFAULT_ALARM_MODE) {
+  const entry = recordCompletion(task, session, synthetic, alarmMode);
   if (!entry) return;
   activeAlert = {
     ...entry,
     active: true,
     triggeredAt: new Date().toISOString()
   };
-  startBackendAlarm(entry.status);
+  if (BACKEND_ALARM_ENABLED) backendAlarm.start(entry.status, entry.alarmMode);
 }
 
 function dismissAlert() {
-  stopBackendAlarm();
+  backendAlarm.stop();
   if (!activeAlert) return null;
   const dismissedAt = new Date().toISOString();
   const key = activeAlert.key;
@@ -352,64 +122,6 @@ function dismissAlert() {
   saveStore();
   refreshMonitor();
   return activeAlert;
-}
-
-function psQuote(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-function startBackendAlarm(status) {
-  stopBackendAlarm();
-  try {
-    if (fs.existsSync(ALARM_STOP_FILE)) fs.unlinkSync(ALARM_STOP_FILE);
-  } catch {
-    // Best effort.
-  }
-
-  if (process.platform !== "win32") return;
-  const high = status === "error" ? 520 : 980;
-  const low = status === "error" ? 390 : 740;
-  const script = [
-    `$stop = ${psQuote(ALARM_STOP_FILE)}`,
-    `while (-not (Test-Path -LiteralPath $stop)) {`,
-    `  [Console]::Beep(${high}, 180)`,
-    `  Start-Sleep -Milliseconds 80`,
-    `  [Console]::Beep(${low}, 180)`,
-    `  Start-Sleep -Milliseconds 260`,
-    `}`
-  ].join("; ");
-
-  try {
-    alarmProcess = spawn(
-      "powershell.exe",
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-      { windowsHide: true, stdio: "ignore" }
-    );
-    alarmProcess.on("exit", () => {
-      alarmProcess = null;
-    });
-  } catch {
-    alarmProcess = null;
-  }
-}
-
-function stopBackendAlarm() {
-  try {
-    fs.writeFileSync(ALARM_STOP_FILE, "stop");
-  } catch {
-    // Best effort.
-  }
-  if (alarmProcess && !alarmProcess.killed) {
-    setTimeout(() => {
-      if (alarmProcess && !alarmProcess.killed) {
-        try {
-          alarmProcess.kill();
-        } catch {
-          // Best effort.
-        }
-      }
-    }, 350);
-  }
 }
 
 function refreshProcesses() {
@@ -479,7 +191,11 @@ function parseTasklistCsv(stdout) {
 }
 
 function refreshMonitor() {
-  const sessions = parseAllSessions();
+  const sessions = parseAllSessions({
+    sessionsDir: SESSIONS_DIR,
+    sessionIndexFile: SESSION_INDEX,
+    parseCache
+  });
   if (!initialized) {
     for (const task of allTerminalTasks(sessions)) knownTerminalKeys.add(task.key);
     initialized = true;
@@ -535,6 +251,12 @@ function buildSnapshot(sessions) {
       codexHome: CODEX_HOME,
       sessionsDir: SESSIONS_DIR,
       note: "Codex CLI does not expose a documented live status API here; this monitor parses local JSONL rollout files and uses process polling as a secondary signal."
+    },
+    alarm: {
+      backendEnabled: BACKEND_ALARM_ENABLED,
+      backend: BACKEND_ALARM_ENABLED ? backendAlarm.backendName : "disabled",
+      defaultMode: DEFAULT_ALARM_MODE,
+      modes: ["urgent", "gentle", "silent"]
     },
     process: processSnapshot,
     activeSession: activeSession ? summarizeSession(activeSession) : null,
@@ -617,20 +339,37 @@ function buildStats(sessions, activeSession) {
   const completed = sessions.flatMap((session) => session.tasks)
     .filter((task) => task.durationMs !== null && task.status !== "running");
   const durations = completed.map((task) => task.durationMs).filter((value) => Number.isFinite(value));
+  const sortedDurations = [...durations].sort((a, b) => a - b);
+  const errors = completed.filter((task) => task.status === "error");
+  const finished = completed.filter((task) => task.status === "finished");
   const lastActivityMs = sessions.reduce((latest, session) => Math.max(latest, session.lastActivityMs || 0), 0);
+  const latestCompleted = completed.reduce((latest, task) => Math.max(latest, task.completedAtMs || 0), 0);
 
   return {
     tasksToday: starts.filter((task) => task.startedAtMs >= startDay).length,
     tasksThisWeek: starts.filter((task) => task.startedAtMs >= startWeek).length,
     tasksThisSession: activeSession ? activeSession.taskStarts.length : 0,
     completedTasks: completed.length,
+    finishedTasks: finished.length,
+    errorTasks: errors.length,
     averageTaskDurationMs: durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : null,
+    medianTaskDurationMs: median(sortedDurations),
+    fastestTaskDurationMs: sortedDurations.length ? sortedDurations[0] : null,
+    slowestTaskDurationMs: sortedDurations.length ? sortedDurations[sortedDurations.length - 1] : null,
+    lastCompletedAt: latestCompleted ? new Date(latestCompleted).toISOString() : null,
     lastActivityAt: lastActivityMs ? new Date(lastActivityMs).toISOString() : null,
     timeSinceLastActivityMs: lastActivityMs ? Math.max(0, Date.now() - lastActivityMs) : null
   };
 }
 
-function createSyntheticAlert(status = "finished") {
+function median(sortedValues) {
+  if (!sortedValues.length) return null;
+  const middle = Math.floor(sortedValues.length / 2);
+  if (sortedValues.length % 2) return sortedValues[middle];
+  return Math.round((sortedValues[middle - 1] + sortedValues[middle]) / 2);
+}
+
+function createSyntheticAlert(status = "finished", alarmMode = DEFAULT_ALARM_MODE) {
   const now = Date.now();
   const task = {
     key: `synthetic:${status}:${now}`,
@@ -644,7 +383,7 @@ function createSyntheticAlert(status = "finished") {
     completedAtMs: now,
     durationMs: 125000
   };
-  triggerAlert(task, { sessionId: "synthetic", name: "Test alert", cwd: null, file: null }, true);
+  triggerAlert(task, { sessionId: "synthetic", name: "Test alert", cwd: null, file: null }, true, normalizeAlarmMode(alarmMode));
   refreshMonitor();
 }
 
@@ -728,7 +467,10 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/test-alert") {
-    createSyntheticAlert(url.searchParams.get("status") === "error" ? "error" : "finished");
+    createSyntheticAlert(
+      url.searchParams.get("status") === "error" ? "error" : "finished",
+      url.searchParams.get("mode") || DEFAULT_ALARM_MODE
+    );
     sendJson(res, 200, { ok: true, alert: activeAlert });
     return;
   }
@@ -759,9 +501,9 @@ server.listen(PORT, HOST, () => {
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
-    stopBackendAlarm();
+    backendAlarm.stop();
     server.close(() => process.exit(0));
   });
 }
 
-process.on("exit", stopBackendAlarm);
+process.on("exit", () => backendAlarm.stop());

@@ -114,6 +114,28 @@ dt {
   gap: 10px;
 }
 
+.select-control {
+  display: grid;
+  min-width: 126px;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.select-control select {
+  min-height: 42px;
+  border: 1px solid #acbac6;
+  border-radius: 8px;
+  padding: 0 34px 0 12px;
+  color: var(--ink);
+  background: #ffffff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+}
+
 #armButton.armed {
   color: #ffffff;
   border-color: var(--green);
@@ -241,7 +263,7 @@ dt {
 .metrics-grid {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
 }
 
