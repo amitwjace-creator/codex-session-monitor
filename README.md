@@ -115,6 +115,7 @@ PORT=3786
 CODEX_HOME=%USERPROFILE%\.codex
 ALARM_MODE=urgent
 BACKEND_ALARM=on
+COMPLETION_RETENTION_DAYS=unlimited
 ```
 
 Override them when starting the server:
@@ -123,6 +124,7 @@ Override them when starting the server:
 $env:PORT = "3790"
 $env:CODEX_HOME = "C:\Users\you\.codex"
 $env:ALARM_MODE = "gentle"
+$env:COMPLETION_RETENTION_DAYS = "7"
 npm start
 ```
 
@@ -133,6 +135,10 @@ Alarm modes:
 - `silent`: visual alert and browser notification only
 
 Set `BACKEND_ALARM=off` to disable the server-side audio loop while keeping browser audio available after **Arm alerts**.
+
+Completion log retention:
+
+- `COMPLETION_RETENTION_DAYS`: number of days to retain completed tasks in the local history log (default: `unlimited` / disabled, capped at 500 entries). Set to a positive number (e.g., `7`, `14`, `30`) to automatically prune older records on startup and during recording. Values like `0`, `off`, `none`, `unlimited`, or `disabled` retain all records up to the 500-item cap.
 
 Runtime logs and local completion history are stored under ignored local folders:
 
