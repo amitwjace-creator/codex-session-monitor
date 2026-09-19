@@ -9,6 +9,10 @@ const {
   parseAllSessions
 } = require("./lib/session-parser");
 const { BackendAlarm, normalizeAlarmMode } = require("./lib/backend-alarm");
+const {
+  parseRetentionDays,
+  pruneCompletions
+} = require("./lib/completion-store");
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number.parseInt(process.env.PORT || "3786", 10);
@@ -22,6 +26,7 @@ const RUNTIME_DIR = path.join(__dirname, ".runtime");
 const ALARM_STOP_FILE = path.join(RUNTIME_DIR, "alarm-stop");
 const DEFAULT_ALARM_MODE = normalizeAlarmMode(process.env.ALARM_MODE || "urgent");
 const BACKEND_ALARM_ENABLED = !/^(0|false|off|no)$/i.test(process.env.BACKEND_ALARM || "on");
+const COMPLETION_RETENTION_DAYS = parseRetentionDays(process.env.COMPLETION_RETENTION_DAYS);
 
 const parseCache = new Map();
 const sseClients = new Set();
@@ -30,6 +35,7 @@ let initialized = false;
 let knownTerminalKeys = new Set();
 let activeAlert = null;
 let lastSnapshot = null;
+let lastPrunedAtMs = 0;
 let processSnapshot = {
   checkedAt: null,
   hasCodex: false,
@@ -53,11 +59,19 @@ function ensureDir(dir) {
 function loadStore() {
   try {
     const parsed = JSON.parse(fs.readFileSync(STORE_FILE, "utf8"));
-    return {
+    const rawCompletions = Array.isArray(parsed.completions) ? parsed.completions : [];
+    const completions = pruneCompletions(rawCompletions, COMPLETION_RETENTION_DAYS);
+    const loaded = {
       version: 1,
-      completions: Array.isArray(parsed.completions) ? parsed.completions : [],
+      completions,
       dismissedKeys: Array.isArray(parsed.dismissedKeys) ? parsed.dismissedKeys : []
     };
+    if (completions.length !== rawCompletions.length) {
+      const tmp = `${STORE_FILE}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(loaded, null, 2));
+      fs.renameSync(tmp, STORE_FILE);
+    }
+    return loaded;
   } catch {
     return { version: 1, completions: [], dismissedKeys: [] };
   }
@@ -90,7 +104,7 @@ function recordCompletion(task, session, synthetic = false, alarmMode = DEFAULT_
       dismissedAt: null
     };
     store.completions.unshift(entry);
-    store.completions = store.completions.slice(0, 500);
+    store.completions = pruneCompletions(store.completions, COMPLETION_RETENTION_DAYS);
     saveStore();
   }
   return entry;
@@ -212,6 +226,15 @@ function refreshMonitor() {
     }
   }
 
+  if (COMPLETION_RETENTION_DAYS !== null && Date.now() - lastPrunedAtMs >= 60000) {
+    lastPrunedAtMs = Date.now();
+    const beforeLen = store.completions.length;
+    store.completions = pruneCompletions(store.completions, COMPLETION_RETENTION_DAYS);
+    if (store.completions.length !== beforeLen) {
+      saveStore();
+    }
+  }
+
   lastSnapshot = buildSnapshot(sessions);
   broadcastStatus(lastSnapshot);
   return lastSnapshot;
@@ -265,6 +288,7 @@ function buildSnapshot(sessions) {
     alert: activeAlert,
     usage: summarizeUsage(activeSession?.tokenEvent || null),
     stats,
+    retentionDays: COMPLETION_RETENTION_DAYS,
     completions: store.completions.slice(0, 40)
   };
 }
@@ -476,7 +500,12 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/api/health") {
-    sendJson(res, 200, { ok: true, codexHome: CODEX_HOME, sessionsDir: SESSIONS_DIR });
+    sendJson(res, 200, {
+      ok: true,
+      codexHome: CODEX_HOME,
+      sessionsDir: SESSIONS_DIR,
+      retentionDays: COMPLETION_RETENTION_DAYS
+    });
     return;
   }
 
