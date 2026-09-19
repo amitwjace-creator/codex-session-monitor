@@ -164,14 +164,17 @@ See [ROADMAP.md](ROADMAP.md).
 
 ## Contributing
 
-Contributions are welcome. Good first improvements include:
+Contributions are welcome. The best place to start is one of the scoped issues below:
 
-- More resilient Codex event parsing
-- Better historical charts
-- Tray app packaging
-- Configurable alarm sounds
+| Issue | Area |
+| :--- | :--- |
+| [#1 · Configurable completion-log retention](https://github.com/amitwjace-creator/codex-session-monitor/issues/1) | Backend + tests |
+| [#2 · Integration tests for partial JSONL writes](https://github.com/amitwjace-creator/codex-session-monitor/issues/2) | Parser reliability |
+| [#3 · Accessible task-duration trend chart](https://github.com/amitwjace-creator/codex-session-monitor/issues/3) | Frontend + accessibility |
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for local development notes.
+Each issue includes context, constraints, likely starting points, and acceptance criteria. Comment with a short implementation outline before starting so work is not duplicated.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local development and pull-request guidance.
 
 ## License
 
